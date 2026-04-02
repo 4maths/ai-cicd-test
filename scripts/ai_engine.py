@@ -1,7 +1,7 @@
 """
 ai_engine.py — LLM API wrapper cho AI CI/CD Assistant.
 
-Ho tro: Gemini 1.5 Flash (chinh), Groq/Llama 3 (fallback).
+Chi dung: Gemini 1.5 Flash.
 Tat ca du lieu dau vao phai qua sanitize_data truoc khi gui len API.
 """
 
@@ -112,69 +112,14 @@ def call_gemini(prompt: str, max_tokens: int = 1000) -> Optional[str]:
         return None
 
 
-# ---------------------------------------------------------------------------
-# Groq / Llama 3 (fallback)
-# ---------------------------------------------------------------------------
-
-GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
-GROQ_MODEL = "llama3-70b-8192"
-
-
-def call_groq(prompt: str, max_tokens: int = 1000) -> Optional[str]:
-    """
-    Goi Groq API (Llama 3) va tra ve phan hoi dang chuoi.
-
-    Args:
-        prompt: Noi dung prompt da duoc sanitize.
-        max_tokens: Gioi han so token trong phan hoi.
-
-    Returns:
-        Chuoi ket qua tu model, hoac None neu that bai.
-    """
-    api_key = os.getenv("GROQ_API_KEY")
-    if not api_key:
-        logger.error("GROQ_API_KEY chua duoc thiet lap.")
-        return None
-
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "model": GROQ_MODEL,
-        "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": max_tokens,
-        "temperature": 0.2,
-    }
-
-    try:
-        response = requests.post(
-            GROQ_API_URL,
-            headers=headers,
-            json=payload,
-            timeout=30,
-        )
-        response.raise_for_status()
-        data = response.json()
-        return data["choices"][0]["message"]["content"]
-    except requests.exceptions.Timeout:
-        logger.error("Groq API timeout sau 30 giay.")
-        return None
-    except requests.exceptions.HTTPError as exc:
-        logger.error("Groq HTTP error: %s", exc)
-        return None
-    except (KeyError, IndexError, json.JSONDecodeError) as exc:
-        logger.error("Khong the parse phan hoi Groq: %s", exc)
-        return None
-
 
 # ---------------------------------------------------------------------------
-# Public interface — tu dong fallback
+# Public interface
 # ---------------------------------------------------------------------------
 
 def call_llm(prompt: str, max_tokens: int = 1000) -> Optional[str]:
     """
-    Goi LLM voi fallback tu dong: Gemini -> Groq.
+    Goi Gemini 1.5 Flash API.
 
     Du lieu dau vao se duoc sanitize truoc khi gui.
 
@@ -183,7 +128,7 @@ def call_llm(prompt: str, max_tokens: int = 1000) -> Optional[str]:
         max_tokens: Gioi han so token trong phan hoi.
 
     Returns:
-        Chuoi ket qua tu model, hoac None neu ca hai deu that bai.
+        Chuoi ket qua tu model, hoac None neu that bai.
     """
     clean_prompt = sanitize_data(prompt)
 
@@ -193,13 +138,7 @@ def call_llm(prompt: str, max_tokens: int = 1000) -> Optional[str]:
         logger.info("Gemini thanh cong.")
         return result
 
-    logger.warning("Gemini that bai, chuyen sang Groq...")
-    result = call_groq(clean_prompt, max_tokens)
-    if result:
-        logger.info("Groq thanh cong.")
-        return result
-
-    logger.error("Ca Gemini va Groq deu that bai.")
+    logger.error("Gemini that bai.")
     return None
 
 
