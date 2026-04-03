@@ -10,6 +10,7 @@ import re
 import json
 import logging
 import requests
+import time
 from typing import Optional
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -67,6 +68,7 @@ def call_gemini(prompt: str, max_tokens: int = 1000) -> Optional[str]:
     Goi Gemini API va tra ve phan hoi dang chuoi.
 
     Model name duoc lay tu LLM_MODEL env variable.
+    Co retry logic cho 429 (rate limit) errors.
     Doc tham khao: https://ai.google.dev/gemini-api/docs/models/gemini
 
     Args:
@@ -96,24 +98,38 @@ def call_gemini(prompt: str, max_tokens: int = 1000) -> Optional[str]:
         },
     }
 
-    try:
-        response = requests.post(
-            f"{api_url}?key={api_key}",
-            json=payload,
-            timeout=30,
-        )
-        response.raise_for_status()
-        data = response.json()
-        return data["candidates"][0]["content"]["parts"][0]["text"]
-    except requests.exceptions.Timeout:
-        logger.error("Gemini API timeout sau 30 giay.")
-        return None
-    except requests.exceptions.HTTPError as exc:
-        logger.error("Gemini HTTP error: %s", exc)
-        return None
-    except (KeyError, IndexError, json.JSONDecodeError) as exc:
-        logger.error("Khong the parse phan hoi Gemini: %s", exc)
-        return None
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            response = requests.post(
+                f"{api_url}?key={api_key}",
+                json=payload,
+                timeout=30,
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data["candidates"][0]["content"]["parts"][0]["text"]
+        except requests.exceptions.Timeout:
+            logger.error("Gemini API timeout sau 30 giay.")
+            return None
+        except requests.exceptions.HTTPError as exc:
+            if exc.response.status_code == 429:  # Rate limit
+                if attempt < max_retries - 1:
+                    wait_time = (2 ** attempt) + 1  # Exponential backoff: 2s, 5s, 9s
+                    logger.warning("Rate limit (429). Retry sau %ds...", wait_time)
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    logger.error("Vua het so lan retry cho rate limit. Gemini HTTP error: %s", exc)
+                    return None
+            else:
+                logger.error("Gemini HTTP error: %s", exc)
+                return None
+        except (KeyError, IndexError, json.JSONDecodeError) as exc:
+            logger.error("Khong the parse phan hoi Gemini: %s", exc)
+            return None
+    
+    return None
 
 
 
@@ -123,7 +139,7 @@ def call_gemini(prompt: str, max_tokens: int = 1000) -> Optional[str]:
 
 def call_llm(prompt: str, max_tokens: int = 1000) -> Optional[str]:
     """
-    Goi Gemini 1.5 Flash API.
+    Goi Gemini API (model tu LLM_MODEL env).
 
     Du lieu dau vao se duoc sanitize truoc khi gui.
 
@@ -136,7 +152,7 @@ def call_llm(prompt: str, max_tokens: int = 1000) -> Optional[str]:
     """
     clean_prompt = sanitize_data(prompt)
 
-    logger.info("Dang goi Gemini 1.5 Flash...")
+    logger.info("Dang goi Gemini...")
     result = call_gemini(clean_prompt, max_tokens)
     if result:
         logger.info("Gemini thanh cong.")
