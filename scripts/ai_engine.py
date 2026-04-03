@@ -85,6 +85,9 @@ def call_gemini(prompt: str, max_tokens: int = 1000) -> Optional[str]:
         logger.error("GEMINI_API_KEY chua duoc thiet lap.")
         return None
 
+    # Safe debug logging (never log API key)
+    logger.debug("Gemini API config: model=%s", model_name)
+
     api_url = (
         f"https://generativelanguage.googleapis.com/v1beta/models/"
         f"{model_name}:generateContent"

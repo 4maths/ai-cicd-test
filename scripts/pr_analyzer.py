@@ -7,7 +7,6 @@ post ket qua vao comment cua PR.
 Bien moi truong can thiet:
     GITHUB_TOKEN   : GitHub Actions token (tu dong co san)
     GEMINI_API_KEY : Gemini API key
-    GROQ_API_KEY   : Groq API key (fallback)
     REPO           : Ten repository dang 'owner/repo'
     PR_NUMBER      : So thu tu cua Pull Request
 """
@@ -206,19 +205,38 @@ def main() -> None:
     raw_response = call_llm(prompt, max_tokens=1000)
 
     if not raw_response:
-        logger.error("LLM khong tra ve ket qua.")
-        sys.exit(1)
+        logger.warning("LLM khong tra ve ket qua. Post notice comment va exit gracefully.")
+        notice = f"""## AI PR Review — #{pr_number}
+
+⚠️ **AI Review skipped:** Gemini API unavailable (rate limit or service issue).
+Please review code manually or try again later.
+
+---
+*AI CI/CD Assistant — Gemini*
+"""
+        post_pr_comment(repo, pr_number, token, notice)
+        sys.exit(0)  # Graceful exit, do NOT fail CI
 
     analysis = parse_json_response(raw_response)
     if not analysis:
-        logger.error("Khong the parse JSON tu LLM. Raw: %s", raw_response[:300])
-        sys.exit(1)
+        logger.warning("Khong the parse JSON tu LLM. Post notice va exit gracefully. Raw: %s", raw_response[:300])
+        notice = f"""## AI PR Review — #{pr_number}
+
+⚠️ **AI Review failed:** Could not parse response.
+Please review code manually.
+
+---
+*AI CI/CD Assistant — Gemini*
+"""
+        post_pr_comment(repo, pr_number, token, notice)
+        sys.exit(0)  # Graceful exit, do NOT fail CI
 
     comment_body = format_review_comment(analysis, pr_number)
     success = post_pr_comment(repo, pr_number, token, comment_body)
 
     if not success:
-        sys.exit(1)
+        logger.warning("Failed to post comment, but exiting gracefully (exit 0).")
+        sys.exit(0)
 
     logger.info("PR Analyzer hoan thanh.")
 
