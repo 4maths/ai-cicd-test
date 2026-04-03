@@ -59,18 +59,15 @@ def sanitize_data(text: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Gemini 1.5 Flash
+# Gemini API (Model name tu env)
 # ---------------------------------------------------------------------------
-
-GEMINI_API_URL = (
-    "https://generativelanguage.googleapis.com/v1beta/models/"
-    "gemini-1.5-flash:generateContent"
-)
-
 
 def call_gemini(prompt: str, max_tokens: int = 1000) -> Optional[str]:
     """
-    Goi Gemini 1.5 Flash API va tra ve phan hoi dang chuoi.
+    Goi Gemini API va tra ve phan hoi dang chuoi.
+
+    Model name duoc lay tu LLM_MODEL env variable.
+    Doc tham khao: https://ai.google.dev/gemini-api/docs/models/gemini
 
     Args:
         prompt: Noi dung prompt da duoc sanitize.
@@ -80,9 +77,16 @@ def call_gemini(prompt: str, max_tokens: int = 1000) -> Optional[str]:
         Chuoi ket qua tu model, hoac None neu that bai.
     """
     api_key = os.getenv("GEMINI_API_KEY")
+    model_name = os.getenv("LLM_MODEL", "gemini-2.0-flash")
+    
     if not api_key:
         logger.error("GEMINI_API_KEY chua duoc thiet lap.")
         return None
+
+    api_url = (
+        f"https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{model_name}:generateContent"
+    )
 
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
@@ -94,7 +98,7 @@ def call_gemini(prompt: str, max_tokens: int = 1000) -> Optional[str]:
 
     try:
         response = requests.post(
-            f"{GEMINI_API_URL}?key={api_key}",
+            f"{api_url}?key={api_key}",
             json=payload,
             timeout=30,
         )
