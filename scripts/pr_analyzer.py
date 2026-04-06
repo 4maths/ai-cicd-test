@@ -6,7 +6,7 @@ post ket qua vao comment cua PR.
 
 Bien moi truong can thiet:
     GITHUB_TOKEN   : GitHub Actions token (tu dong co san)
-    GEMINI_API_KEY : Gemini API key
+    GROQ_API_KEY   : Groq API key
     REPO           : Ten repository dang 'owner/repo'
     PR_NUMBER      : So thu tu cua Pull Request
 """
@@ -170,7 +170,7 @@ def format_review_comment(analysis: dict, pr_number: int) -> str:
 {render_list(analysis.get('suggestions', []))}
 
 ---
-*Phan tich tu dong boi AI CI/CD Assistant — Gemini 1.5 Flash*
+*Phan tich tu dong boi AI CI/CD Assistant — Groq Llama 3.1*
 """
 
 
@@ -208,11 +208,11 @@ def main() -> None:
         logger.warning("LLM khong tra ve ket qua. Post notice comment va exit gracefully.")
         notice = f"""## AI PR Review — #{pr_number}
 
-⚠️ **AI Review skipped:** Gemini API unavailable (rate limit or service issue).
+⚠️ **AI Review skipped:** Groq API unavailable (rate limit or service issue).
 Please review code manually or try again later.
 
 ---
-*AI CI/CD Assistant — Gemini*
+*AI CI/CD Assistant — Groq Llama 3.1*
 """
         post_pr_comment(repo, pr_number, token, notice)
         sys.exit(0)  # Graceful exit, do NOT fail CI
@@ -226,7 +226,7 @@ Please review code manually or try again later.
 Please review code manually.
 
 ---
-*AI CI/CD Assistant — Gemini*
+*AI CI/CD Assistant — Groq Llama 3.1*
 """
         post_pr_comment(repo, pr_number, token, notice)
         sys.exit(0)  # Graceful exit, do NOT fail CI

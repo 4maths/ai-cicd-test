@@ -1,7 +1,7 @@
 """
 ai_engine.py — LLM API wrapper cho AI CI/CD Assistant.
 
-Chi dung: Gemini 1.5 Flash.
+Chi dung: Groq Llama 3.1 (70B Versatile).
 Tat ca du lieu dau vao phai qua sanitize_data truoc khi gui len API.
 """
 
@@ -60,16 +60,16 @@ def sanitize_data(text: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Gemini API (Model name tu env)
+# Groq API (Model name tu env)
 # ---------------------------------------------------------------------------
 
-def call_gemini(prompt: str, max_tokens: int = 1000) -> Optional[str]:
+def call_groq(prompt: str, max_tokens: int = 1000) -> Optional[str]:
     """
-    Goi Gemini API va tra ve phan hoi dang chuoi.
+    Goi Groq API va tra ve phan hoi dang chuoi.
 
     Model name duoc lay tu LLM_MODEL env variable.
     Co retry logic cho 429 (rate limit) errors.
-    Doc tham khao: https://ai.google.dev/gemini-api/docs/models/gemini
+    Doc tham khao: https://console.groq.com/docs/models
 
     Args:
         prompt: Noi dung prompt da duoc sanitize.
@@ -78,42 +78,42 @@ def call_gemini(prompt: str, max_tokens: int = 1000) -> Optional[str]:
     Returns:
         Chuoi ket qua tu model, hoac None neu that bai.
     """
-    api_key = os.getenv("GEMINI_API_KEY")
-    model_name = os.getenv("LLM_MODEL", "gemini-2.0-flash")
+    api_key = os.getenv("GROQ_API_KEY")
+    model_name = os.getenv("LLM_MODEL", "llama-3.1-70b-versatile")
     
     if not api_key:
-        logger.error("GEMINI_API_KEY chua duoc thiet lap.")
+        logger.error("GROQ_API_KEY chua duoc thiet lap.")
         return None
 
     # Safe debug logging (never log API key)
-    logger.debug("Gemini API config: model=%s", model_name)
+    logger.debug("Groq API config: model=%s", model_name)
 
-    api_url = (
-        f"https://generativelanguage.googleapis.com/v1beta/models/"
-        f"{model_name}:generateContent"
-    )
+    api_url = "https://api.groq.com/openai/v1/chat/completions"
 
     payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "maxOutputTokens": max_tokens,
-            "temperature": 0.2,
-        },
+        "model": model_name,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": max_tokens,
+        "temperature": 0.2,
     }
 
     max_retries = 3
     for attempt in range(max_retries):
         try:
             response = requests.post(
-                f"{api_url}?key={api_key}",
+                api_url,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
                 json=payload,
                 timeout=30,
             )
             response.raise_for_status()
             data = response.json()
-            return data["candidates"][0]["content"]["parts"][0]["text"]
+            return data["choices"][0]["message"]["content"]
         except requests.exceptions.Timeout:
-            logger.error("Gemini API timeout sau 30 giay.")
+            logger.error("Groq API timeout sau 30 giay.")
             return None
         except requests.exceptions.HTTPError as exc:
             if exc.response.status_code == 429:  # Rate limit
@@ -123,13 +123,13 @@ def call_gemini(prompt: str, max_tokens: int = 1000) -> Optional[str]:
                     time.sleep(wait_time)
                     continue
                 else:
-                    logger.error("Vua het so lan retry cho rate limit. Gemini HTTP error: %s", exc)
+                    logger.error("Vua het so lan retry cho rate limit. Groq HTTP error: %s", exc)
                     return None
             else:
-                logger.error("Gemini HTTP error: %s", exc)
+                logger.error("Groq HTTP error: %s", exc)
                 return None
         except (KeyError, IndexError, json.JSONDecodeError) as exc:
-            logger.error("Khong the parse phan hoi Gemini: %s", exc)
+            logger.error("Khong the parse phan hoi Groq: %s", exc)
             return None
     
     return None
@@ -142,7 +142,7 @@ def call_gemini(prompt: str, max_tokens: int = 1000) -> Optional[str]:
 
 def call_llm(prompt: str, max_tokens: int = 1000) -> Optional[str]:
     """
-    Goi Gemini API (model tu LLM_MODEL env).
+    Goi Groq API (model tu LLM_MODEL env).
 
     Du lieu dau vao se duoc sanitize truoc khi gui.
 
@@ -155,13 +155,13 @@ def call_llm(prompt: str, max_tokens: int = 1000) -> Optional[str]:
     """
     clean_prompt = sanitize_data(prompt)
 
-    logger.info("Dang goi Gemini...")
-    result = call_gemini(clean_prompt, max_tokens)
+    logger.info("Dang goi Groq...")
+    result = call_groq(clean_prompt, max_tokens)
     if result:
-        logger.info("Gemini thanh cong.")
+        logger.info("Groq thanh cong.")
         return result
 
-    logger.error("Gemini that bai.")
+    logger.error("Groq that bai.")
     return None
 
 

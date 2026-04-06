@@ -27,9 +27,9 @@ jobs:
       - name: Run AI PR Analyzer
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          LLM_MODEL: gemini-2.0-flash
-          LLM_PROVIDER: gemini
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          LLM_MODEL: llama-3.1-70b-versatile
+          LLM_PROVIDER: groq
           MAX_TOKENS: "1024"
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}

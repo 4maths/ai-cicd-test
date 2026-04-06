@@ -6,8 +6,7 @@ post ket qua vao comment cua PR lien quan.
 
 Bien moi truong can thiet:
     GITHUB_TOKEN   : GitHub Actions token (tu dong co san)
-    GEMINI_API_KEY : Gemini API key
-    GROQ_API_KEY   : Groq API key (fallback)
+    GROQ_API_KEY   : Groq API key
     REPO           : Ten repository dang 'owner/repo'
     RUN_ID         : ID cua workflow run that bai
     PR_NUMBER      : So PR lien quan (co the rong)
@@ -166,7 +165,7 @@ def format_log_comment(analysis: dict, run_id: int) -> str:
 {analysis.get('prevention', 'Khong co goi y.')}
 
 ---
-*Phan tich tu dong boi AI CI/CD Assistant — Gemini 1.5 Flash*
+*Phan tich tu dong boi AI CI/CD Assistant — Groq Llama 3.1*
 """
 
 
