@@ -1,7 +1,7 @@
 """
 ai_engine.py — LLM API wrapper cho AI CI/CD Assistant.
 
-Ho tro: Gemini 1.5 Flash (chinh), Groq/Llama 3 (fallback).
+Chi dung: Groq Llama 3.1 (70B Versatile).
 Tat ca du lieu dau vao phai qua sanitize_data truoc khi gui len API.
 """
 
@@ -10,6 +10,7 @@ import re
 import json
 import logging
 import requests
+import time
 from typing import Optional
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -59,70 +60,16 @@ def sanitize_data(text: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Gemini 1.5 Flash
+# Groq API (Model name tu env)
 # ---------------------------------------------------------------------------
-
-GEMINI_API_URL = (
-    "https://generativelanguage.googleapis.com/v1beta/models/"
-    "gemini-1.5-flash:generateContent"
-)
-
-
-def call_gemini(prompt: str, max_tokens: int = 1000) -> Optional[str]:
-    """
-    Goi Gemini 1.5 Flash API va tra ve phan hoi dang chuoi.
-
-    Args:
-        prompt: Noi dung prompt da duoc sanitize.
-        max_tokens: Gioi han so token trong phan hoi.
-
-    Returns:
-        Chuoi ket qua tu model, hoac None neu that bai.
-    """
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        logger.error("GEMINI_API_KEY chua duoc thiet lap.")
-        return None
-
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "maxOutputTokens": max_tokens,
-            "temperature": 0.2,
-        },
-    }
-
-    try:
-        response = requests.post(
-            f"{GEMINI_API_URL}?key={api_key}",
-            json=payload,
-            timeout=30,
-        )
-        response.raise_for_status()
-        data = response.json()
-        return data["candidates"][0]["content"]["parts"][0]["text"]
-    except requests.exceptions.Timeout:
-        logger.error("Gemini API timeout sau 30 giay.")
-        return None
-    except requests.exceptions.HTTPError as exc:
-        logger.error("Gemini HTTP error: %s", exc)
-        return None
-    except (KeyError, IndexError, json.JSONDecodeError) as exc:
-        logger.error("Khong the parse phan hoi Gemini: %s", exc)
-        return None
-
-
-# ---------------------------------------------------------------------------
-# Groq / Llama 3 (fallback)
-# ---------------------------------------------------------------------------
-
-GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
-GROQ_MODEL = "llama3-70b-8192"
-
 
 def call_groq(prompt: str, max_tokens: int = 1000) -> Optional[str]:
     """
-    Goi Groq API (Llama 3) va tra ve phan hoi dang chuoi.
+    Goi Groq API va tra ve phan hoi dang chuoi.
+
+    Model name duoc lay tu LLM_MODEL env variable.
+    Co retry logic cho 429 (rate limit) errors.
+    Doc tham khao: https://console.groq.com/docs/models
 
     Args:
         prompt: Noi dung prompt da duoc sanitize.
@@ -132,49 +79,70 @@ def call_groq(prompt: str, max_tokens: int = 1000) -> Optional[str]:
         Chuoi ket qua tu model, hoac None neu that bai.
     """
     api_key = os.getenv("GROQ_API_KEY")
+    model_name = os.getenv("LLM_MODEL", "llama-3.1-70b-versatile")
+    
     if not api_key:
         logger.error("GROQ_API_KEY chua duoc thiet lap.")
         return None
 
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
+    # Safe debug logging (never log API key)
+    logger.debug("Groq API config: model=%s", model_name)
+
+    api_url = "https://api.groq.com/openai/v1/chat/completions"
+
     payload = {
-        "model": GROQ_MODEL,
+        "model": model_name,
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": max_tokens,
         "temperature": 0.2,
     }
 
-    try:
-        response = requests.post(
-            GROQ_API_URL,
-            headers=headers,
-            json=payload,
-            timeout=30,
-        )
-        response.raise_for_status()
-        data = response.json()
-        return data["choices"][0]["message"]["content"]
-    except requests.exceptions.Timeout:
-        logger.error("Groq API timeout sau 30 giay.")
-        return None
-    except requests.exceptions.HTTPError as exc:
-        logger.error("Groq HTTP error: %s", exc)
-        return None
-    except (KeyError, IndexError, json.JSONDecodeError) as exc:
-        logger.error("Khong the parse phan hoi Groq: %s", exc)
-        return None
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            response = requests.post(
+                api_url,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+                timeout=30,
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data["choices"][0]["message"]["content"]
+        except requests.exceptions.Timeout:
+            logger.error("Groq API timeout sau 30 giay.")
+            return None
+        except requests.exceptions.HTTPError as exc:
+            if exc.response.status_code == 429:  # Rate limit
+                if attempt < max_retries - 1:
+                    wait_time = (2 ** attempt) + 1  # Exponential backoff: 2s, 5s, 9s
+                    logger.warning("Rate limit (429). Retry sau %ds...", wait_time)
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    logger.error("Vua het so lan retry cho rate limit. Groq HTTP error: %s", exc)
+                    return None
+            else:
+                logger.error("Groq HTTP error: %s", exc)
+                return None
+        except (KeyError, IndexError, json.JSONDecodeError) as exc:
+            logger.error("Khong the parse phan hoi Groq: %s", exc)
+            return None
+    
+    return None
+
 
 
 # ---------------------------------------------------------------------------
-# Public interface — tu dong fallback
+# Public interface
 # ---------------------------------------------------------------------------
 
 def call_llm(prompt: str, max_tokens: int = 1000) -> Optional[str]:
     """
-    Goi LLM voi fallback tu dong: Gemini -> Groq.
+    Goi Groq API (model tu LLM_MODEL env).
 
     Du lieu dau vao se duoc sanitize truoc khi gui.
 
@@ -183,23 +151,17 @@ def call_llm(prompt: str, max_tokens: int = 1000) -> Optional[str]:
         max_tokens: Gioi han so token trong phan hoi.
 
     Returns:
-        Chuoi ket qua tu model, hoac None neu ca hai deu that bai.
+        Chuoi ket qua tu model, hoac None neu that bai.
     """
     clean_prompt = sanitize_data(prompt)
 
-    logger.info("Dang goi Gemini 1.5 Flash...")
-    result = call_gemini(clean_prompt, max_tokens)
-    if result:
-        logger.info("Gemini thanh cong.")
-        return result
-
-    logger.warning("Gemini that bai, chuyen sang Groq...")
+    logger.info("Dang goi Groq...")
     result = call_groq(clean_prompt, max_tokens)
     if result:
         logger.info("Groq thanh cong.")
         return result
 
-    logger.error("Ca Gemini va Groq deu that bai.")
+    logger.error("Groq that bai.")
     return None
 
 
