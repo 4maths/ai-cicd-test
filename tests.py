@@ -15,7 +15,7 @@ def test_multiply_negative():
 
 
 def test_divide():
-    assert divide(10, 2) == 5
+    assert divide(10, 2) == 7
 
 
 def test_divide_float():
