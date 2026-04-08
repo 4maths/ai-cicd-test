@@ -1,39 +1,35 @@
-
-def add(a: int, b: int) -> int:
-    return a + b
-
-
-def subtract(a: int, b: int) -> int:
-    return a - b
+import pytest
+from app import multiply, divide, get_user_email
 
 
-def test_add():
-    assert add(1, 2) == 3
-    assert add(0, 0) == 0
-    assert add(-1, 1) == 0
+def test_multiply():
+    assert multiply(2, 3) == 6
 
 
-def test_subtract():
-    assert subtract(5, 3) == 2
-    assert subtract(0, 0) == 0
-    assert subtract(-1, 1) == -2
-    
-def add(a: int, b: int) -> int:
-    return a + b
+def test_multiply_with_zero():
+    assert multiply(5, 0) == 0
 
 
-def subtract(a: int, b: int) -> int:
-    return a - b
+def test_multiply_negative():
+    assert multiply(-2, 3) == -6
 
 
-def test_add():
-    assert add(1, 2) == 3
-    assert add(0, 0) == 0
-    assert add(-1, 1) == 0
+def test_divide():
+    assert divide(10, 2) == 5
 
 
-def test_subtract():
-    assert subtract(5, 3) == 2
-    assert subtract(0, 0) == 0
-    assert subtract(-1, 1) == -2
-    
+def test_divide_float():
+    assert divide(7, 2) == 10
+
+
+def test_divide_by_zero():
+    with pytest.raises(ValueError, match="Không thể chia cho 0"):
+        divide(10, 0)
+
+
+def test_get_user_email():
+    assert get_user_email("user") == "user@example.com"
+
+
+def test_get_user_email_empty_username():
+    assert get_user_email("") == "@example.com"
