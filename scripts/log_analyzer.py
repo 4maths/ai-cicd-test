@@ -1,46 +1,30 @@
-"""
-log_analyzer.py — Module 2: AI-powered Build Failure Analyzer.
-
-Lay log tu GitHub Actions workflow that bai, gui len LLM de tim root cause,
-post ket qua vao comment cua PR lien quan.
-
-Bien moi truong can thiet:
-    GITHUB_TOKEN   : GitHub Actions token (tu dong co san)
-    GROQ_API_KEY   : Groq API key
-    REPO           : Ten repository dang 'owner/repo'
-    RUN_ID         : ID cua workflow run that bai
-    PR_NUMBER      : So PR lien quan (co the rong)
-"""
-
 from __future__ import annotations
 
+import logging
 import os
 import sys
-import logging
+
 from github import Github, GithubException
+
 from ai_engine import call_llm, parse_json_response
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
-MAX_LOG_CHARS = 3000  # Chi lay 3000 ky tu cuoi cua log (phan quan trong nhat)
+MAX_LOG_CHARS = 3000
 
-
-# ---------------------------------------------------------------------------
-# GitHub helpers
-# ---------------------------------------------------------------------------
 
 def get_workflow_logs(repo_name: str, run_id: int, token: str) -> str:
     """
-    Lay log cua tat ca jobs trong mot workflow run cu the.
+    Lấy log workflow ở mức job/step summary từ GitHub Actions.
 
-    Args:
-        repo_name: Ten repo dang 'owner/repo'.
-        run_id: ID cua workflow run.
-        token: GitHub personal access token.
+    Arguments:
+        repo_name: Tên repo dạng 'owner/repo'
+        run_id: ID của workflow run
+        token: GitHub token
 
     Returns:
-        Chuoi log gop lai (toi da MAX_LOG_CHARS ky tu cuoi), hoac rong neu loi.
+        Chuỗi log tóm tắt, hoặc chuỗi rỗng nếu lỗi
     """
     try:
         gh = Github(token)
@@ -49,145 +33,237 @@ def get_workflow_logs(repo_name: str, run_id: int, token: str) -> str:
 
         log_parts: list[str] = []
         for job in run.jobs():
-            job_header = f"=== JOB: {job.name} | Status: {job.conclusion} ==="
+            job_header = f"JOB: {job.name} | Status: {job.conclusion}"
             step_logs: list[str] = []
+
             for step in job.steps:
-                step_logs.append(
-                    f"[Step: {step.name} | {step.conclusion}]"
-                )
+                step_logs.append(f"[Step: {step.name} | {step.conclusion}]")
+
             log_parts.append(job_header + "\n" + "\n".join(step_logs))
 
         combined = "\n\n".join(log_parts)
 
-        # Chi lay phan cuoi — noi thuong chua loi chinh
         if len(combined) > MAX_LOG_CHARS:
-            logger.info("Log qua dai, chi lay %d ky tu cuoi.", MAX_LOG_CHARS)
-            return "...[log bi cat phan dau]\n" + combined[-MAX_LOG_CHARS:]
+            logger.info("Log quá dài, chỉ lấy %d ký tự cuối.", MAX_LOG_CHARS)
+            return "...\n" + combined[-MAX_LOG_CHARS:]
+
         return combined
 
     except GithubException as exc:
-        logger.error("Loi khi lay workflow logs: %s", exc)
+        logger.error("Lỗi khi lấy workflow logs: %s", exc)
         return ""
 
 
 def post_pr_comment(repo_name: str, pr_number: int, token: str, body: str) -> bool:
     """
-    Post comment len Pull Request tren GitHub.
+    Post comment lên Pull Request trên GitHub.
 
-    Args:
-        repo_name: Ten repo dang 'owner/repo'.
-        pr_number: So thu tu PR.
-        token: GitHub personal access token.
-        body: Noi dung comment (Markdown).
+    Arguments:
+        repo_name: Tên repo dạng 'owner/repo'
+        pr_number: Số Pull Request
+        token: GitHub token
+        body: Nội dung comment dạng Markdown
 
     Returns:
-        True neu thanh cong, False neu that bai.
+        True nếu comment thành công, False nếu thất bại
     """
     try:
         gh = Github(token)
         repo = gh.get_repo(repo_name)
         pr = repo.get_pull(pr_number)
         pr.create_issue_comment(body)
-        logger.info("Da post comment len PR #%d.", pr_number)
+        logger.info("Đã post comment lên PR #%d thành công.", pr_number)
         return True
     except GithubException as exc:
-        logger.error("Loi khi post comment: %s", exc)
+        logger.error("Lỗi khi post comment lên PR: %s", exc)
         return False
 
 
-# ---------------------------------------------------------------------------
-# AI analysis
-# ---------------------------------------------------------------------------
-
 def build_log_prompt(log_content: str) -> str:
     """
-    Xay dung prompt gui len LLM de phan tich log CI that bai.
-
-    Args:
-        log_content: Noi dung log da duoc lay tu GitHub.
-
-    Returns:
-        Chuoi prompt hoan chinh.
+    Xây dựng prompt để gửi sang LLM cho bài toán phân tích log CI fail.
     """
-    return f"""Ban la mot DevOps engineer giau kinh nghiem trong viec debug CI/CD pipeline.
-Nhiem vu: Phan tich log CI that bai duoi day va tim ra nguyen nhan goc re (root cause).
+    return f"""Bạn là một DevOps engineer giàu kinh nghiệm trong việc debug CI/CD pipeline, build failure, test failure và workflow automation trên GitHub Actions.
+
+Nhiệm vụ:
+Phân tích log CI thất bại dưới đây và xác định nguyên nhân gốc rễ một cách chính xác, ngắn gọn, có căn cứ.
+Chỉ được dựa trên thông tin xuất hiện trong log.
+Không suy đoán quá mức.
+Không viết chung chung.
+Không thêm lời mở đầu hay giải thích ngoài JSON.
 
 Log CI:
 {log_content}
 
-Yeu cau phan tich:
-1. Xac dinh chinh xac buoc (step) nao bi loi
-2. Giai thich nguyen nhan goc re
-3. De xuat cach sua loi cu the va co the thuc hien ngay
-4. Goi y cach ngan ngua loi nay tai xay ra
+Mục tiêu phân tích:
+1. Xác định chính xác step hoặc job thất bại
+2. Phân loại lỗi theo đúng bản chất
+3. Giải thích nguyên nhân gốc rễ rõ ràng, ngắn gọn, dễ hiểu
+4. Đề xuất cách sửa lỗi cụ thể, có thể thực hiện ngay
+5. Đề xuất cách phòng tránh lỗi này tái diễn trong tương lai
 
-Tra ve DUNG FORMAT JSON sau (khong giai thich them, khong markdown):
+Nguyên tắc bắt buộc:
+- Chỉ phân tích dựa trên log được cung cấp
+- Nếu log không đủ thông tin, phải thể hiện sự thận trọng trong phần root_cause
+- Không bịa thêm bối cảnh không có trong log
+- Nếu lỗi nằm ở test, dependency, cấu hình workflow, hoặc network/API, cần phân loại đúng
+- "suggested_fix" phải mang tính hành động, không được quá chung chung
+- "prevention" phải là biện pháp thực tế để tránh lỗi lặp lại
+- "fix_command" chỉ nên điền khi có lệnh cụ thể hợp lý để áp dụng
+- Nếu không có command phù hợp rõ ràng, trả về chuỗi rỗng cho "fix_command"
+
+Hướng dẫn phân loại "error_type":
+- "build_error": lỗi trong quá trình build hoặc compile
+- "test_failure": lỗi do test fail, assertion fail, expected != actual
+- "dependency_error": lỗi thiếu package, sai version, install dependency thất bại
+- "config_error": lỗi cấu hình workflow, env variable, secret, path, permission
+- "network_error": lỗi timeout, rate limit, API unavailable, kết nối thất bại
+- "other": các lỗi còn lại không thuộc nhóm trên
+
+Yêu cầu chất lượng output:
+- "failed_step": phải ghi rõ tên step hoặc job thất bại nếu suy ra được từ log
+- "root_cause": 2-3 câu, nêu đúng nguyên nhân gốc rễ, không lan man
+- "suggested_fix": nêu từng hành động cụ thể để sửa
+- "confidence": chỉ chọn HIGH khi log thể hiện nguyên nhân rất rõ ràng
+- "confidence": chọn MEDIUM nếu có dấu hiệu mạnh nhưng chưa hoàn toàn chắc chắn
+- "confidence": chọn LOW nếu log quá ít thông tin hoặc nguyên nhân chỉ là suy luận hợp lý
+- "prevention": đưa ra biện pháp phòng tránh thực tế như thêm validation, cải thiện test, khóa version dependency, tăng logging, hoặc retry/backoff
+
+Trả về đúng JSON theo schema sau:
 {{
-  "error_type": "Loai loi: build_error | test_failure | dependency_error | config_error | network_error | other",
-  "failed_step": "Ten buoc bi loi cu the",
-  "root_cause": "Mo ta nguyen nhan goc re (2-3 cau ro rang)",
-  "suggested_fix": "Huong dan sua loi step-by-step",
+  "error_type": "build_error | test_failure | dependency_error | config_error | network_error | other",
+  "failed_step": "Tên step hoặc job thất bại cụ thể",
+  "root_cause": "Mô tả ngắn gọn nguyên nhân gốc rễ, tối đa 2-3 câu",
+  "suggested_fix": "Hướng dẫn sửa lỗi cụ thể, rõ ràng, có thể làm ngay",
+  "fix_command": "",
   "confidence": "HIGH | MEDIUM | LOW",
-  "prevention": "Cach ngan ngua loi nay tai xay ra"
+  "prevention": "Cách ngăn lỗi này tái diễn trong tương lai"
 }}
 
-Chi tra ve JSON, khong co bat ky van ban nao khac.
+Quy tắc bổ sung cho output:
+- Nếu lỗi là dependency_error và suy ra được package thiếu, "fix_command" nên là lệnh như pip install <package>
+- Nếu là test_failure, hãy chỉ ra test hoặc nhóm test fail nếu log thể hiện được
+- Nếu là config_error, hãy chỉ ra biến môi trường, secret, path hoặc permission có vấn đề nếu log thể hiện được
+- Nếu không đủ dữ liệu để xác định chính xác, phải giảm confidence
+- Không thêm bất kỳ văn bản nào ngoài JSON hợp lệ
+
+Chỉ trả về JSON hợp lệ. Không markdown. Không giải thích thêm.
 """
+
+
+def normalize_analysis(analysis: dict) -> dict:
+    """
+    Chuẩn hóa dữ liệu phân tích từ LLM để tránh lỗi do sai kiểu hoặc thiếu field.
+    """
+    normalized = {
+        "error_type": str(analysis.get("error_type", "other")).strip().lower(),
+        "failed_step": str(analysis.get("failed_step", "Không xác định")).strip(),
+        "root_cause": str(analysis.get("root_cause", "Không xác định được nguyên nhân gốc rễ.")).strip(),
+        "suggested_fix": str(analysis.get("suggested_fix", "Chưa có gợi ý sửa cụ thể.")).strip(),
+        "fix_command": str(analysis.get("fix_command", "")).strip(),
+        "confidence": str(analysis.get("confidence", "LOW")).strip().upper(),
+        "prevention": str(analysis.get("prevention", "Chưa có khuyến nghị phòng tránh.")).strip(),
+    }
+
+    valid_error_types = {
+        "build_error",
+        "test_failure",
+        "dependency_error",
+        "config_error",
+        "network_error",
+        "other",
+    }
+    if normalized["error_type"] not in valid_error_types:
+        normalized["error_type"] = "other"
+
+    if normalized["confidence"] not in {"HIGH", "MEDIUM", "LOW"}:
+        normalized["confidence"] = "LOW"
+
+    if not normalized["failed_step"]:
+        normalized["failed_step"] = "Không xác định"
+
+    if not normalized["root_cause"]:
+        normalized["root_cause"] = "Không xác định được nguyên nhân gốc rễ."
+
+    if not normalized["suggested_fix"]:
+        normalized["suggested_fix"] = "Chưa có gợi ý sửa cụ thể."
+
+    if not normalized["prevention"]:
+        normalized["prevention"] = "Chưa có khuyến nghị phòng tránh."
+
+    return normalized
 
 
 def format_log_comment(analysis: dict, run_id: int) -> str:
     """
-    Dinh dang ket qua phan tich log thanh Markdown comment.
-
-    Args:
-        analysis: Dict chua ket qua phan tich tu LLM.
-        run_id: ID workflow run de hien thi trong tieu de.
-
-    Returns:
-        Chuoi Markdown san sang post len GitHub.
+    Định dạng kết quả phân tích log thành Markdown để comment lên PR.
     """
-    confidence = analysis.get("confidence", "UNKNOWN")
-    conf_icon = {"HIGH": "HIGH", "MEDIUM": "MEDIUM", "LOW": "LOW"}.get(confidence, "?")
+    error_type = analysis.get("error_type", "other")
+    failed_step = analysis.get("failed_step", "Không xác định")
+    root_cause = analysis.get("root_cause", "Không xác định được nguyên nhân gốc rễ.")
+    suggested_fix = analysis.get("suggested_fix", "Chưa có gợi ý sửa cụ thể.")
+    fix_command = analysis.get("fix_command", "")
+    confidence = analysis.get("confidence", "LOW")
+    prevention = analysis.get("prevention", "Chưa có khuyến nghị phòng tránh.")
 
-    return f"""## AI Build Failure Analysis — Run #{run_id}
+    confidence_icon = {
+        "HIGH": "RED",
+        "MEDIUM": "YELLOW",
+        "LOW": "GREEN",
+    }.get(confidence, "GREY")
 
-**Loai loi:** {analysis.get('error_type', 'unknown')}
-**Buoc that bai:** `{analysis.get('failed_step', 'Khong xac dinh')}`
-**Do tin cay phan tich:** {conf_icon} {confidence}
+    error_type_label = {
+        "build_error": "Build Error",
+        "test_failure": "Test Failure",
+        "dependency_error": "Dependency Error",
+        "config_error": "Config Error",
+        "network_error": "Network Error",
+        "other": "Other",
+    }.get(error_type, "Other")
 
-### Nguyen nhan goc re
-{analysis.get('root_cause', 'Khong the xac dinh nguyen nhan.')}
+    fix_command_block = ""
+    if fix_command:
+        fix_command_block = f"""
 
-### Huong dan sua loi
-{analysis.get('suggested_fix', 'Khong co goi y cu the.')}
+### Lệnh gợi ý
+```bash
+{fix_command}
+```"""
 
-### Ngan ngua tai xay ra
-{analysis.get('prevention', 'Khong co goi y.')}
+    return f"""## AI CI Log Analysis — Run #{run_id}
 
----
-*Phan tich tu dong boi AI CI/CD Assistant — Groq Llama 3.1*
+**Loại lỗi:** {error_type_label}  
+**Step/job thất bại:** {failed_step}  
+**Confidence:** {confidence_icon} {confidence}  
+
+### Root cause
+{root_cause}
+
+### Suggested fix
+{suggested_fix}{fix_command_block}
+
+### Prevention
+{prevention}
 """
 
 
-# ---------------------------------------------------------------------------
-# Entrypoint
-# ---------------------------------------------------------------------------
-
 def main() -> None:
-    """Chay Log Analyzer: lay log, phan tich, post comment."""
+    """
+    Thực hiện Log Analyzer: lấy log workflow fail, phân tích, rồi post comment lên PR nếu có.
+    """
     token = os.getenv("GITHUB_TOKEN", "")
     repo = os.getenv("REPO", "")
     run_id_str = os.getenv("RUN_ID", "")
     pr_number_str = os.getenv("PR_NUMBER", "")
 
     if not all([token, repo, run_id_str]):
-        logger.error("Thieu bien moi truong: GITHUB_TOKEN, REPO, hoac RUN_ID.")
+        logger.error("Thiếu biến môi trường: GITHUB_TOKEN, REPO, hoặc RUN_ID.")
         sys.exit(1)
 
     try:
         run_id = int(run_id_str)
     except ValueError:
-        logger.error("RUN_ID khong hop le: %s", run_id_str)
+        logger.error("RUN_ID không hợp lệ: %s", run_id_str)
         sys.exit(1)
 
     pr_number: int | None = None
@@ -195,35 +271,54 @@ def main() -> None:
         try:
             pr_number = int(pr_number_str)
         except ValueError:
-            logger.warning("PR_NUMBER khong hop le, se bo qua post comment: %s", pr_number_str)
+            logger.warning("PR_NUMBER không hợp lệ: %s", pr_number_str)
 
-    logger.info("Bat dau phan tich log cho run #%d tren %s", run_id, repo)
+    logger.info("Bắt đầu phân tích log cho run #%d trên %s", run_id, repo)
 
     log_content = get_workflow_logs(repo, run_id, token)
     if not log_content:
-        logger.warning("Log rong, bo qua phan tich.")
+        logger.warning("Log rỗng, bỏ qua phân tích.")
         sys.exit(0)
 
     prompt = build_log_prompt(log_content)
     raw_response = call_llm(prompt, max_tokens=1000)
 
     if not raw_response:
-        logger.error("LLM khong tra ve ket qua.")
-        sys.exit(1)
+        logger.warning("LLM không trả về kết quả. Exit gracefully.")
+        if pr_number:
+            notice = f"""## AI CI Log Analysis — Run #{run_id}
+Groq API unavailable.
+"""
+            post_pr_comment(repo, pr_number, token, notice)
+        sys.exit(0)
 
     analysis = parse_json_response(raw_response)
     if not analysis:
-        logger.error("Khong the parse JSON tu LLM. Raw: %s", raw_response[:300])
-        sys.exit(1)
+        logger.warning("Không thể parse JSON từ LLM. Raw: %s", raw_response[:300])
+        if pr_number:
+            notice = f"""## AI CI Log Analysis — Run #{run_id}
+Could not parse response.
+"""
+            post_pr_comment(repo, pr_number, token, notice)
+        sys.exit(0)
 
+    analysis = normalize_analysis(analysis)
     comment_body = format_log_comment(analysis, run_id)
 
     if pr_number:
-        post_pr_comment(repo, pr_number, token, comment_body)
+        success = post_pr_comment(repo, pr_number, token, comment_body)
+        if not success:
+            logger.warning("Không post được comment lên PR, nhưng vẫn exit gracefully.")
+            sys.exit(0)
     else:
-        logger.info("Khong co PR_NUMBER, in ket qua ra stdout:\n%s", comment_body)
+        logger.info("Không có PR_NUMBER. In kết quả ra log:\n%s", comment_body)
 
-    logger.info("Log Analyzer hoan thanh.")
+    logger.info(
+        "Log Analyzer hoàn thành. error_type=%s, failed_step=%s, confidence=%s",
+        analysis.get("error_type"),
+        analysis.get("failed_step"),
+        analysis.get("confidence"),
+    )
 
 
 if __name__ == "__main__":

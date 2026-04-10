@@ -1,103 +1,84 @@
-"""
-ai_engine.py — LLM API wrapper cho AI CI/CD Assistant.
-
-Chi dung: Groq Llama 3.1 (70B Versatile).
-Tat ca du lieu dau vao phai qua sanitize_data truoc khi gui len API.
-"""
-
-import os
-import re
 import json
 import logging
-import requests
+import os
+import re
 import time
 from typing import Optional
+
+import requests
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Security
-# ---------------------------------------------------------------------------
-
 def sanitize_data(text: str) -> str:
     """
-    Che giau thong tin nhay cam truoc khi gui len LLM API.
-    BAT BUOC chay truoc moi API call.
-
-    Args:
-        text: Noi dung can kiem tra va lam sach.
-
-    Returns:
-        Chuoi da duoc che giau cac thong tin nhay cam.
+    Che bớt dữ liệu nhạy cảm trước khi gửi prompt ra ngoài.
     """
-    # Xoa IP address
+    if not text:
+        return text
+
+    # Xóa IP address
     text = re.sub(
-        r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b',
-        '[IP_REDACTED]',
-        text
+        r"\b\d{1,3}(?:\.\d{1,3}){3}\b",
+        "[IP_REDACTED]",
+        text,
     )
-    # Xoa email
+
+    # Xóa email
     text = re.sub(
-        r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}',
-        '[EMAIL_REDACTED]',
-        text
+        r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}",
+        "[EMAIL_REDACTED]",
+        text,
     )
-    # Xoa AWS credentials
+
+    # Xóa AWS access key
     text = re.sub(
-        r'(AKIA|ASIA)[A-Z0-9]{16}',
-        '[AWS_KEY_REDACTED]',
-        text
+        r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b",
+        "[AWS_KEY_REDACTED]",
+        text,
     )
-    # Xoa token/secret dang key=value
+
+    # Xóa bearer token
     text = re.sub(
-        r'(?i)(token|secret|password|api_key|apikey)\s*=\s*\S+',
-        r'\1=[REDACTED]',
-        text
+        r"(?i)\bBearer\s+[A-Za-z0-9._\-]+\b",
+        "Bearer [REDACTED]",
+        text,
     )
+
+    # Xóa token/secret/password/api_key dạng key=value hoặc key: value
+    text = re.sub(
+        r"(?i)\b(token|secret|password|api_key|apikey|access_token|refresh_token|github_token)\b\s*[:=]\s*['\"]?\S+['\"]?",
+        r"\1=[REDACTED]",
+        text,
+    )
+
     return text
 
 
-# ---------------------------------------------------------------------------
-# Groq API (Model name tu env)
-# ---------------------------------------------------------------------------
-
 def call_groq(prompt: str, max_tokens: int = 1000) -> Optional[str]:
     """
-    Goi Groq API va tra ve phan hoi dang chuoi.
-
-    Model name duoc lay tu LLM_MODEL env variable.
-    Co retry logic cho 429 (rate limit) errors.
-    Doc tham khao: https://console.groq.com/docs/models
-
-    Args:
-        prompt: Noi dung prompt da duoc sanitize.
-        max_tokens: Gioi han so token trong phan hoi.
-
-    Returns:
-        Chuoi ket qua tu model, hoac None neu that bai.
+    Gọi Groq Chat Completions API và trả về nội dung text từ model.
     """
-    api_key = os.getenv("GROQ_API_KEY")
-    model_name = os.getenv("LLM_MODEL", "llama-3.1-70b-versatile")
-    
+    api_key = os.getenv("GROQ_API_KEY", "")
+    model_name = os.getenv("LLM_MODEL", "llama-3.3-70b-versatile")
+
     if not api_key:
-        logger.error("GROQ_API_KEY chua duoc thiet lap.")
+        logger.error("GROQ_API_KEY chưa được thiết lập.")
         return None
 
-    # Safe debug logging (never log API key)
     logger.debug("Groq API config: model=%s", model_name)
 
     api_url = "https://api.groq.com/openai/v1/chat/completions"
-
     payload = {
         "model": model_name,
         "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": max_tokens,
+        "max_completion_tokens": max_tokens,
         "temperature": 0.2,
     }
 
     max_retries = 3
+
     for attempt in range(max_retries):
         try:
             response = requests.post(
@@ -110,75 +91,95 @@ def call_groq(prompt: str, max_tokens: int = 1000) -> Optional[str]:
                 timeout=30,
             )
             response.raise_for_status()
+
             data = response.json()
-            return data["choices"][0]["message"]["content"]
+
+            choices = data.get("choices")
+            if not choices or not isinstance(choices, list):
+                logger.error("Phản hồi Groq không có trường 'choices' hợp lệ: %s", str(data)[:300])
+                return None
+
+            message = choices[0].get("message", {})
+            content = message.get("content")
+            if not content:
+                logger.error("Phản hồi Groq không chứa nội dung message.content hợp lệ.")
+                return None
+
+            return content
+
         except requests.exceptions.Timeout:
-            logger.error("Groq API timeout sau 30 giay.")
+            logger.error("Groq API timeout sau 30 giây.")
             return None
+
         except requests.exceptions.HTTPError as exc:
-            if exc.response.status_code == 429:  # Rate limit
+            status_code = exc.response.status_code if exc.response is not None else None
+
+            if status_code == 429:
                 if attempt < max_retries - 1:
-                    wait_time = (2 ** attempt) + 1  # Exponential backoff: 2s, 5s, 9s
-                    logger.warning("Rate limit (429). Retry sau %ds...", wait_time)
+                    wait_time = (2 ** attempt) + 1
+                    logger.warning("Rate limit (429). Retry sau %d giây...", wait_time)
                     time.sleep(wait_time)
                     continue
-                else:
-                    logger.error("Vua het so lan retry cho rate limit. Groq HTTP error: %s", exc)
-                    return None
-            else:
-                logger.error("Groq HTTP error: %s", exc)
+
+                logger.error("Hết số lần retry vì rate limit (429): %s", exc)
                 return None
-        except (KeyError, IndexError, json.JSONDecodeError) as exc:
-            logger.error("Khong the parse phan hoi Groq: %s", exc)
+
+            logger.error("Groq HTTP error: %s", exc)
             return None
-    
+
+        except (KeyError, IndexError, json.JSONDecodeError, ValueError) as exc:
+            logger.error("Không thể parse phản hồi Groq: %s", exc)
+            return None
+
+        except requests.exceptions.RequestException as exc:
+            logger.error("Lỗi request tới Groq: %s", exc)
+            return None
+
     return None
 
 
-
-# ---------------------------------------------------------------------------
-# Public interface
-# ---------------------------------------------------------------------------
-
 def call_llm(prompt: str, max_tokens: int = 1000) -> Optional[str]:
     """
-    Goi Groq API (model tu LLM_MODEL env).
-
-    Du lieu dau vao se duoc sanitize truoc khi gui.
-
-    Args:
-        prompt: Noi dung prompt chua sanitize.
-        max_tokens: Gioi han so token trong phan hoi.
-
-    Returns:
-        Chuoi ket qua tu model, hoac None neu that bai.
+    Hàm wrapper chung để sanitize dữ liệu rồi gọi LLM provider.
     """
     clean_prompt = sanitize_data(prompt)
 
-    logger.info("Dang goi Groq...")
-    result = call_groq(clean_prompt, max_tokens)
+    logger.info("Đang gọi Groq.")
+    result = call_groq(clean_prompt, max_tokens=max_tokens)
+
     if result:
-        logger.info("Groq thanh cong.")
+        logger.info("Groq trả kết quả thành công.")
         return result
 
-    logger.error("Groq that bai.")
+    logger.error("Groq thất bại.")
     return None
 
 
 def parse_json_response(raw: str) -> Optional[dict]:
     """
-    Parse chuoi JSON tra ve tu LLM, xu ly truong hop co markdown fence.
+    Parse phản hồi text từ LLM thành JSON object.
 
-    Args:
-        raw: Chuoi phan hoi thô tu model.
-
-    Returns:
-        dict neu parse thanh cong, None neu that bai.
+    Hỗ trợ cả trường hợp model bọc JSON trong code fence hoặc chèn text thừa
+    trước/sau object JSON.
     """
-    # Loai bo markdown code fence neu co
+    if not raw:
+        return None
+
     cleaned = re.sub(r"```(?:json)?", "", raw).strip().rstrip("`").strip()
+
     try:
         return json.loads(cleaned)
-    except json.JSONDecodeError as exc:
-        logger.error("JSON parse that bai: %s\nRaw response: %s", exc, raw[:200])
-        return None
+    except json.JSONDecodeError:
+        pass
+
+    match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+    if match:
+        candidate = match.group(0)
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError as exc:
+            logger.error("JSON parse thất bại sau fallback: %s\nRaw response: %s", exc, raw[:300])
+            return None
+
+    logger.error("JSON parse thất bại. Raw response: %s", raw[:300])
+    return None
