@@ -1,0 +1,24 @@
+rules:
+  - id: hardcoded_secret
+    description: Phát hiện secret/token/password hardcode
+    pattern: '(?i)(api_key|apikey|token|secret|password|access_token|refresh_token|github_token)\s*[:=]\s*["''][^"'']+["'']'
+    severity: HIGH
+    why_it_matters: Secret hardcode có thể bị lộ qua git history, log hoặc người có quyền truy cập repo.
+    suggested_fix: Chuyển secret sang biến môi trường hoặc secret manager thay vì hardcode trong source code.
+    allow_override: false
+
+  - id: debug_mode_enabled
+    description: Phát hiện debug mode bật trong code
+    pattern: '(?i)(debug\s*=\s*True|app\.run\(.*debug\s*=\s*True)'
+    severity: MEDIUM
+    why_it_matters: Debug mode có thể làm lộ stack trace hoặc thông tin nội bộ trong production.
+    suggested_fix: Tắt debug mode ở production và điều khiển bằng biến môi trường.
+    allow_override: true
+
+  - id: subprocess_shell_true
+    description: Phát hiện subprocess shell=True có thể gây command injection
+    pattern: '(?s)subprocess\.(run|Popen)\(.*?shell\s*=\s*True'
+    severity: HIGH
+    why_it_matters: shell=True có thể dẫn tới command injection nếu input không được kiểm soát.
+    suggested_fix: Tránh dùng shell=True, truyền command dưới dạng list thay vì string.
+    allow_override: false
