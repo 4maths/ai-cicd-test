@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aicicd"
+version = "0.1.0"
+description = "AI-assisted CI/CD tooling for PR review, security scan, log analysis, and deploy guard"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "PyGithub==2.3.0",
+  "requests==2.31.0",
+  "python-dotenv==1.0.0",
+  "PyYAML==6.0.2"
+]
+
+[project.scripts]
+aicicd = "aicicd.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

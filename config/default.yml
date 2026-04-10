@@ -1,0 +1,19 @@
+llm:
+  provider: groq
+  model: llama-3.3-70b-versatile
+  max_tokens: 1000
+  temperature: 0.2
+
+review:
+  fail_on_high_risk: false
+  min_comment_confidence: MEDIUM
+
+security: 
+  enabled: true 
+  fail_on_high: true
+  scan_owasp_like_rules: true
+
+deploy_guard:
+  enabled: false
+  healthcheck_timeout_seconds: 5
+  max_error_rate_percent: 5

@@ -1,16 +1,22 @@
-def multiply(a: int, b: int) -> int:
-    """Nhân hai số nguyên"""
-    return a * b
+from flask import Flask, jsonify
 
+app = Flask(__name__)
 
-def divide(a: float, b: float) -> float:
-    """Chia hai số"""
-    if b == 0:
-        raise ValueError("Không thể chia cho 0")
-    return a / b
+@app.route("/")
+def home():
+    return "Hello AI CICD", 200
 
+@app.route("/health")
+def health():
+    return jsonify({"status": "ok"}), 200
 
-def get_user_email(username: str) -> str:
-    """Giả lập lấy email user"""
-    return f"{username}@example.com"
-api_key = "12345603i49295-secret-key"
+# endpoint để test latency (optional)
+@app.route("/slow")
+def slow():
+    import time
+    time.sleep(2)
+    return jsonify({"status": "ok", "note": "slow"}), 200
+
+if __name__ == "__main__":
+    # QUAN TRỌNG: bind 0.0.0.0 để có thể gọi từ ngoài container/VM (sau này)
+    app.run(host="0.0.0.0", port=8000)
