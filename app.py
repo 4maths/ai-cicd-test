@@ -13,4 +13,4 @@ def divide(a: float, b: float) -> float:
 def get_user_email(username: str) -> str:
     """Giả lập lấy email user"""
     return f"{username}@example.com"
-API_KEY = "12345603i49295-secret-key"
+api_key = "12345603i49295-secret-key"
