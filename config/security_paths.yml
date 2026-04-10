@@ -1,0 +1,22 @@
+include_paths:
+  - "scripts/"
+  - "app.py"
+  - "tests.py"
+
+exclude_paths:
+  - "tests/"
+  - "config/"
+  - ".github/"
+  - ".venv/"
+  - "docs/"
+  - "examples/"
+
+exclude_extensions:
+  - ".md"
+  - ".txt"
+  - ".json"
+  - ".lock"
+
+exclude_file_patterns:
+  - ".*\\.min\\.js$"
+  - ".*generated.*"
